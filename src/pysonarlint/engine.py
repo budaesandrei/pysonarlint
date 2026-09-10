@@ -131,6 +131,28 @@ def find_java(root: Path | None = None) -> Path:
     )
 
 
+def _engine_version(root: Path, server_jar: Path) -> str:
+    """Version of the engine in use.
+
+    Normally taken from the extension directory name. A directory the user pointed at
+    with --sonarlint-home has no version in its name, so fall back to the jar's own
+    manifest rather than reporting "unknown".
+    """
+    if m := _VERSION_RE.search(root.name):
+        return m.group(1)
+    try:
+        import zipfile
+
+        with zipfile.ZipFile(server_jar) as archive:
+            manifest = archive.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
+        for line in manifest.splitlines():
+            if line.startswith("Implementation-Version:"):
+                return line.split(":", 1)[1].strip()
+    except (OSError, KeyError, zipfile.BadZipFile):
+        pass
+    return "unknown"
+
+
 def discover(explicit_root: Path | None = None) -> Engine:
     """Resolve an engine, preferring an explicit root then the newest install."""
     roots = [explicit_root] if explicit_root else _extension_roots()
@@ -150,13 +172,12 @@ def discover(explicit_root: Path | None = None) -> Engine:
         if not analyzers:
             problems.append(f"{root}: no analyzers/*.jar")
             continue
-        m = _VERSION_RE.search(root.name)
         return Engine(
             java=find_java(root),
             server_jar=server,
             analyzers=analyzers,
             root=root,
-            version=m.group(1) if m else "unknown",
+            version=_engine_version(root, server),
         )
 
     hint = "\n  ".join(problems) if problems else "no extension directories exist"

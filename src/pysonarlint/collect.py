@@ -197,41 +197,76 @@ def collect(
     seen: set[Path] = set()
     files: list[SourceFile] = []
     notes: list[str] = []
-    skipped_large = 0
-    skipped_excluded = 0
+    skipped = {"large": 0, "excluded": 0}
 
     for target in targets:
         target = target.resolve()
         if not target.exists():
             notes.append(f"skipped {target}: does not exist")
             continue
-        for path in _iter_files(target, matcher):
-            if path in seen:
-                continue
-            language = LANGUAGES.get(path.suffix.lower())
-            if language is None:
-                continue  # not a language we can analyze
-            if wanted is not None and language not in wanted:
-                continue
-            if matcher.excluded(path):
-                skipped_excluded += 1
-                continue
-            try:
-                if path.stat().st_size > max_bytes:
-                    skipped_large += 1
-                    continue
-            except OSError:
-                continue
-            seen.add(path)
-            files.append(SourceFile(path=path, language=language))
+        _collect_from_target(
+            target,
+            matcher,
+            wanted,
+            max_bytes,
+            seen=seen,
+            files=files,
+            skipped=skipped,
+        )
 
-    if skipped_large:
-        notes.append(f"skipped {skipped_large} file(s) larger than {max_bytes // 1000}kB")
-    if skipped_excluded:
-        notes.append(f"excluded {skipped_excluded} file(s) by configured exclusions")
+    if skipped["large"]:
+        notes.append(f"skipped {skipped['large']} file(s) larger than {max_bytes // 1000}kB")
+    if skipped["excluded"]:
+        notes.append(f"excluded {skipped['excluded']} file(s) by configured exclusions")
 
     files.sort(key=lambda f: str(f.path))
     return files, notes
+
+
+def _collect_from_target(
+    target: Path,
+    matcher: Matcher,
+    wanted: set[str] | None,
+    max_bytes: int,
+    *,
+    seen: set[Path],
+    files: list[SourceFile],
+    skipped: dict[str, int],
+) -> None:
+    """Walk one target, appending accepted files and tallying deliberate skips."""
+    for path in _iter_files(target, matcher):
+        if path in seen:
+            continue
+        language, reason = _classify(path, matcher, wanted, max_bytes)
+        if reason:
+            skipped[reason] += 1
+        if language is None:
+            continue
+        seen.add(path)
+        files.append(SourceFile(path=path, language=language))
+
+
+def _classify(
+    path: Path, matcher: Matcher, wanted: set[str] | None, max_bytes: int
+) -> tuple[str | None, str | None]:
+    """Decide one file's fate: (language, skip_reason).
+
+    `language` is set only when the file is accepted. `skip_reason` is set only for
+    skips worth reporting ("large", "excluded"); files of no interest are silent.
+    """
+    language = LANGUAGES.get(path.suffix.lower())
+    if language is None:
+        return None, None  # not a language we can analyze
+    if wanted is not None and language not in wanted:
+        return None, None
+    if matcher.excluded(path):
+        return None, "excluded"
+    try:
+        if path.stat().st_size > max_bytes:
+            return None, "large"
+    except OSError:
+        return None, None
+    return language, None
 
 
 def read_text(path: Path) -> str | None:

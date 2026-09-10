@@ -151,6 +151,20 @@ def _connection_id(url_or_org: str) -> str:
     return re.sub(r"[^a-z\d]+", "-", url_or_org.rstrip("/"), flags=re.I).strip("-")
 
 
+def _editor_connections(data: dict[str, Any]) -> list[tuple[dict[str, Any], bool]]:
+    """Flatten the sonarqube/sonarcloud/legacy connection lists into (entry, is_cloud)."""
+    conns: list[tuple[dict[str, Any], bool]] = []
+    for key, is_cloud in (
+        ("sonarlint.connectedMode.connections.sonarqube", False),
+        ("sonarlint.connectedMode.connections.sonarcloud", True),
+        ("sonarlint.connectedMode.servers", False),
+    ):
+        for entry in data.get(key) or []:
+            if isinstance(entry, dict):
+                conns.append((entry, is_cloud))
+    return conns
+
+
 class Resolver:
     """Walks the precedence chain and produces a Config."""
 
@@ -269,7 +283,10 @@ class Resolver:
         These live in different scopes: the binding is per-workspace, but connections
         (and tokens) are application-scoped, so both must be read and joined by id.
         """
-        binding_id: str | None = None
+        self._from_user_connections(self._workspace_binding_id())
+
+    def _workspace_binding_id(self) -> str | None:
+        """Read the per-workspace binding, returning the connection id it points at."""
         for directory in _ancestors(self.target, self.root):
             path = directory / ".vscode" / _SETTINGS_FILE
             if not path.is_file():
@@ -279,37 +296,33 @@ class Resolver:
             if isinstance(project, dict):
                 rel = self._rel(path)
                 self.cfg._set("project_key", _s(project.get("projectKey")), rel)
-                binding_id = _s(project.get("connectionId")) or _s(project.get("serverId"))
-                break
+                return _s(project.get("connectionId")) or _s(project.get("serverId"))
+        return None
 
+    def _from_user_connections(self, binding_id: str | None) -> None:
+        """Read application-scoped connections from each editor, first match wins."""
         for product, _slug in _EDITOR_USER_DIRS:
             path = _user_settings_path(product)
             if not path or not path.is_file():
                 continue
-            data = _load_json(path)
-            conns: list[tuple[dict[str, Any], bool]] = []
-            for entry in data.get("sonarlint.connectedMode.connections.sonarqube") or []:
-                if isinstance(entry, dict):
-                    conns.append((entry, False))
-            for entry in data.get("sonarlint.connectedMode.connections.sonarcloud") or []:
-                if isinstance(entry, dict):
-                    conns.append((entry, True))
-            for entry in data.get("sonarlint.connectedMode.servers") or []:
-                if isinstance(entry, dict):
-                    conns.append((entry, False))
+            conns = _editor_connections(_load_json(path))
             if not conns:
                 continue
             label = f"{product} {_SETTINGS_FILE}"
             match = self._pick_connection(conns, binding_id)
             if match is None:
                 continue
-            entry, is_cloud = match
-            self.cfg._set("url", _normalize_url(_s(entry.get("serverUrl"))), label)
-            self.cfg._set("token", _s(entry.get("token")), label)
-            if is_cloud:
-                self.cfg._set("organization", _s(entry.get("organizationKey")), label)
-                self.cfg._set("region", (_s(entry.get("region")) or "").upper() or None, label)
+            self._apply_connection(match, label)
             break
+
+    def _apply_connection(self, match: tuple[dict[str, Any], bool], label: str) -> None:
+        """Copy url, token and (for cloud) organization/region out of a connection entry."""
+        entry, is_cloud = match
+        self.cfg._set("url", _normalize_url(_s(entry.get("serverUrl"))), label)
+        self.cfg._set("token", _s(entry.get("token")), label)
+        if is_cloud:
+            self.cfg._set("organization", _s(entry.get("organizationKey")), label)
+            self.cfg._set("region", (_s(entry.get("region")) or "").upper() or None, label)
 
     @staticmethod
     def _pick_connection(

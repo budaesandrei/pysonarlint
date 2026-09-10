@@ -8,6 +8,25 @@ version is `0.x`, the CLI surface may change in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- Live progress on stderr: file count, a percentage bar, the current file and a running
+  issue count, plus named phases so the JVM start no longer looks like a hang. Silences
+  itself when stderr is not a terminal, so piped `json`/`sarif` output is unaffected.
+  `--no-progress` disables it.
+
+### Fixed
+
+- **Analysis reported no issues for files that had them.** Sending every `didOpen` at
+  once made the server batch the documents, and a batched analysis publishes empty
+  diagnostics for every file in it. Documents are now opened one at a time, each waiting
+  for the analyzer's own completion signal.
+- **Empty publications erased real findings.** The server re-publishes `[]` for finished
+  documents as new ones open; honouring that wiped results already collected. An empty
+  publication can no longer clear findings.
+- `--sonarlint-home` reported `engine unknown`, because the version came from the
+  directory name. It now falls back to the language server jar's manifest.
+
 ## [0.1.0] - 2026-09-10
 
 First release.

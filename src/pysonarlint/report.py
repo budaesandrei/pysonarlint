@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from .analyze import Result
@@ -74,38 +74,10 @@ def render_text(result: Result, root: Path, *, stream=None, show_notes: bool = T
     def paint(text: str, code: str) -> str:
         return f"{code}{text}{_RESET}" if color else text
 
-    lines: list[str] = []
-    by_file: dict[Path, list[Diagnostic]] = {}
-    for issue in result.issues:
-        by_file.setdefault(issue.path, []).append(issue)
+    lines: list[str] = _grouped_lines(result.issues, root, paint)
 
-    for path in sorted(by_file, key=lambda p: _rel(p, root)):
-        items = sorted(by_file[path], key=lambda i: (i.line, i.column))
-        lines.append(paint(_rel(path, root), _BOLD))
-        for issue in items:
-            loc = f"{issue.line}:{issue.column}"
-            sev = issue.severity_name
-            lines.append(
-                f"  {paint(loc.rjust(8), _DIM)}  "
-                f"{paint(sev.ljust(7), _COLORS.get(sev, ''))}  "
-                f"{issue.message}  {paint(issue.rule, _DIM)}"
-            )
-        lines.append("")
-
-    total = len(result.issues)
-    if total:
-        counts: dict[str, int] = {}
-        for issue in result.issues:
-            counts[issue.severity_name] = counts.get(issue.severity_name, 0) + 1
-        breakdown = ", ".join(
-            f"{counts[s]} {s}" for s in ("error", "warning", "info", "hint") if s in counts
-        )
-        summary = (
-            f"{total} issue{'s' if total != 1 else ''} in "
-            f"{result.files_with_issues} of {len(result.analyzed)} file"
-            f"{'s' if len(result.analyzed) != 1 else ''} ({breakdown})"
-        )
-        lines.append(paint(summary, _BOLD))
+    if result.issues:
+        lines.append(paint(_summary_line(result), _BOLD))
     else:
         lines.append(
             paint(f"No issues in {len(result.analyzed)} file(s)", "\033[32m" if color else "")
@@ -115,9 +87,53 @@ def render_text(result: Result, root: Path, *, stream=None, show_notes: bool = T
     lines.append(paint(f"{mode} mode, engine {result.engine_version}, {result.duration:.1f}s", _DIM))
 
     if show_notes:
-        for note in _safe_notes(result):
-            lines.append(paint(f"note: {note}", _COLORS["info"]))
+        lines.extend(paint(f"note: {note}", _COLORS["info"]) for note in _safe_notes(result))
     return "\n".join(lines)
+
+
+def _grouped_lines(
+    issues: list[Diagnostic], root: Path, paint: Callable[[str, str], str]
+) -> list[str]:
+    """Issues grouped under a heading per file, files and issues both in order."""
+    by_file: dict[Path, list[Diagnostic]] = {}
+    for issue in issues:
+        by_file.setdefault(issue.path, []).append(issue)
+
+    lines: list[str] = []
+    for path in sorted(by_file, key=lambda p: _rel(p, root)):
+        items = sorted(by_file[path], key=lambda i: (i.line, i.column))
+        lines.append(paint(_rel(path, root), _BOLD))
+        lines.extend(_issue_lines(items, paint))
+        lines.append("")
+    return lines
+
+
+def _issue_lines(items: list[Diagnostic], paint: Callable[[str, str], str]) -> list[str]:
+    """One rendered line per issue, already grouped under a file heading."""
+    lines: list[str] = []
+    for issue in items:
+        loc = f"{issue.line}:{issue.column}"
+        sev = issue.severity_name
+        lines.append(
+            f"  {paint(loc.rjust(8), _DIM)}  "
+            f"{paint(sev.ljust(7), _COLORS.get(sev, ''))}  "
+            f"{issue.message}  {paint(issue.rule, _DIM)}"
+        )
+    return lines
+
+
+def _summary_line(result: Result) -> str:
+    """The "N issues in X of Y files (breakdown)" tail line."""
+    total = len(result.issues)
+    counts = _severity_counts(result.issues)
+    breakdown = ", ".join(
+        f"{counts[s]} {s}" for s in ("error", "warning", "info", "hint") if s in counts
+    )
+    return (
+        f"{total} issue{'s' if total != 1 else ''} in "
+        f"{result.files_with_issues} of {len(result.analyzed)} file"
+        f"{'s' if len(result.analyzed) != 1 else ''} ({breakdown})"
+    )
 
 
 def render_json(result: Result, root: Path) -> str:

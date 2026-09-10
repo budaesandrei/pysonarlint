@@ -204,21 +204,36 @@ class LanguageServer:
             if not chunk:
                 return
             buf += chunk
-            while True:
-                head, sep, rest = buf.partition(_HEADER_SEP)
-                if not sep:
-                    break
-                length = self._content_length(head)
-                if length is None or len(rest) < length:
-                    if length is None:
-                        buf = rest  # unparseable header: resync
-                        continue
-                    break
-                raw, buf = rest[:length], rest[length:]
-                try:
-                    self._dispatch(json.loads(raw.decode("utf-8")))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    continue
+            bodies, buf = self._frames_from_buffer(buf)
+            for raw in bodies:
+                self._dispatch_raw(raw)
+
+    @classmethod
+    def _frames_from_buffer(cls, buf: bytes) -> tuple[list[bytes], bytes]:
+        """Split off every complete message body, returning them and the leftover buffer.
+
+        A partial frame is left in the returned buffer for the next read.
+        """
+        bodies: list[bytes] = []
+        while True:
+            head, sep, rest = buf.partition(_HEADER_SEP)
+            if not sep:
+                return bodies, buf
+            length = cls._content_length(head)
+            if length is None:
+                buf = rest  # unparseable header: resync
+                continue
+            if len(rest) < length:
+                return bodies, buf
+            raw, buf = rest[:length], rest[length:]
+            bodies.append(raw)
+
+    def _dispatch_raw(self, raw: bytes) -> None:
+        """Decode one message body and dispatch it, skipping undecodable frames."""
+        try:
+            self._dispatch(json.loads(raw.decode("utf-8")))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
 
     @staticmethod
     def _content_length(head: bytes) -> int | None:
@@ -252,38 +267,56 @@ class LanguageServer:
         params = msg.get("params") or {}
 
         if method == "textDocument/publishDiagnostics":
-            uri = params.get("uri", "")
-            with self._lock:
-                # Later publications supersede earlier ones for the same document.
-                self._diagnostics[uri] = params.get("diagnostics", [])
-                self._published.add(uri)
+            self._on_publish_diagnostics(params)
         elif method == "window/logMessage":
-            message = str(params.get("message", ""))
-            with self._lock:
-                self._logs.append(message)
-                # There is no "analysis complete" notification, so we watch for the
-                # server's own completion line. Diagnostics can arrive several seconds
-                # after the request barrier returns, so a purely time-based wait
-                # reports zero issues on a file that has plenty.
-                if _ANALYSIS_DONE_RE.search(message):
-                    self._analyses_completed += 1
-                # The server degrades to standalone on its own if a binding cannot be
-                # used. Capture that so we never label such a run "connected".
-                for pattern in _DEGRADED_PATTERNS:
-                    if pattern in message:
-                        self._degraded.add(message.split("] ")[-1].strip()[:160])
+            self._on_log_message(params)
         elif msg.get("id") is not None:
-            # Server->client request. Reply so it never blocks waiting on us.
-            try:
-                result = self._reply(method, params)
-            except Exception:  # noqa: BLE001 - a client bug must not wedge the server
-                result = None
-            try:
-                self._write({"jsonrpc": "2.0", "id": msg["id"], "result": result})
-            except (LspError, OSError, ValueError):
-                # The server may be shutting down; nothing useful to do from a
-                # reader thread, and a traceback here is pure noise.
-                pass
+            self._answer_request(msg["id"], method, params)
+
+    def _on_publish_diagnostics(self, params: dict[str, Any]) -> None:
+        uri = params.get("uri", "")
+        items = params.get("diagnostics", [])
+        with self._lock:
+            # An empty publication never erases findings we already have.
+            #
+            # In an editor, publishing [] legitimately means "this file is clean
+            # now". Here it means something else: as each new document is opened
+            # the server re-publishes [] for documents it has finished with, and
+            # honouring that wiped real results, leaving 3 issues where there were
+            # 31. We only ever accumulate, and the process is short-lived, so
+            # stale-clearing semantics are not needed.
+            if items or uri not in self._diagnostics:
+                self._diagnostics[uri] = items
+            self._published.add(uri)
+
+    def _on_log_message(self, params: dict[str, Any]) -> None:
+        message = str(params.get("message", ""))
+        with self._lock:
+            self._logs.append(message)
+            # There is no "analysis complete" notification, so we watch for the
+            # server's own completion line. Diagnostics can arrive several seconds
+            # after the request barrier returns, so a purely time-based wait
+            # reports zero issues on a file that has plenty.
+            if _ANALYSIS_DONE_RE.search(message):
+                self._analyses_completed += 1
+            # The server degrades to standalone on its own if a binding cannot be
+            # used. Capture that so we never label such a run "connected".
+            for pattern in _DEGRADED_PATTERNS:
+                if pattern in message:
+                    self._degraded.add(message.split("] ")[-1].strip()[:160])
+
+    def _answer_request(self, msg_id: Any, method: str | None, params: dict[str, Any]) -> None:
+        """Server->client request. Reply so it never blocks waiting on us."""
+        try:
+            result = self._reply(method, params)
+        except Exception:  # noqa: BLE001 - a client bug must not wedge the server
+            result = None
+        try:
+            self._write({"jsonrpc": "2.0", "id": msg_id, "result": result})
+        except (LspError, OSError, ValueError):
+            # The server may be shutting down; nothing useful to do from a
+            # reader thread, and a traceback here is pure noise.
+            pass
 
     def _reply(self, method: str | None, params: dict[str, Any]) -> Any:
         """Answer a server->client request.
@@ -292,45 +325,39 @@ class LanguageServer:
         load-bearing: replying with a generic empty object makes the server silently
         discard analysis results.
         """
-        if method == "sonarlint/isOpenInEditor":
-            # We are the editor. Claiming otherwise makes the server drop diagnostics
-            # for the document on the floor.
-            return True
-        if method == "sonarlint/isIgnoredByScm":
-            return False
-        if method == "sonarlint/askSslCertificateConfirmation":
-            # Declining is the safe default: it only ever blocks optional analyzer
-            # downloads we don't need, and never silently trusts an unknown cert.
-            return False
-        if method == "sonarlint/listFilesInFolder":
-            return {"foundFiles": self._list_folder(params)}
-        if method == "sonarlint/getJavaConfig":
+        handler = _REPLY_HANDLERS.get(method or "")
+        if handler is None:
             return None
-        if method in ("sonarlint/shouldAnalyseFile", "sonarlint/shouldAnalyseFileCheck"):
-            return {"shouldBeAnalysed": True}
-        if method in ("sonarlint/getFileExclusions", "sonarlint/filterOutExcludedFiles"):
-            return {"excludedFiles": []}
-        if method == "sonarlint/getTokenForServer":
-            if not self.token_provider:
-                return None
-            # The identifier has been spelled serverId and connectionId across
-            # versions; the value is the same connection id either way.
-            ident = str(params.get("serverId") or params.get("connectionId") or "")
-            return self.token_provider(ident)
-        if method == "workspace/configuration":
-            # How the server obtains connection and binding settings. Each item names a
-            # specific section, and the reply must be positionally aligned with them.
-            # Returning a bare [] leaves the server with connections={} and no binding,
-            # so connected mode degrades while still looking connected.
-            items = params.get("items") or [{"section": "sonarlint"}]
-            return [self._setting_for(str(item.get("section") or "")) for item in items]
-        if method == "workspace/workspaceFolders":
-            return []
-        if method == "client/registerCapability":
+        return handler(self, params)
+
+    def _reply_is_open_in_editor(self, _params: dict[str, Any]) -> Any:
+        # We are the editor. Claiming otherwise makes the server drop diagnostics
+        # for the document on the floor.
+        return True
+
+    def _reply_ssl_confirmation(self, _params: dict[str, Any]) -> Any:
+        # Declining is the safe default: it only ever blocks optional analyzer
+        # downloads we don't need, and never silently trusts an unknown cert.
+        return False
+
+    def _reply_list_files_in_folder(self, params: dict[str, Any]) -> Any:
+        return {"foundFiles": self._list_folder(params)}
+
+    def _reply_token_for_server(self, params: dict[str, Any]) -> Any:
+        if not self.token_provider:
             return None
-        if method == "window/showMessageRequest":
-            return None
-        return None
+        # The identifier has been spelled serverId and connectionId across
+        # versions; the value is the same connection id either way.
+        ident = str(params.get("serverId") or params.get("connectionId") or "")
+        return self.token_provider(ident)
+
+    def _reply_configuration(self, params: dict[str, Any]) -> Any:
+        # How the server obtains connection and binding settings. Each item names a
+        # specific section, and the reply must be positionally aligned with them.
+        # Returning a bare [] leaves the server with connections={} and no binding,
+        # so connected mode degrades while still looking connected.
+        items = params.get("items") or [{"section": "sonarlint"}]
+        return [self._setting_for(str(item.get("section") or "")) for item in items]
 
     def _setting_for(self, section: str) -> Any:
         """Value for one requested configuration section.
@@ -493,6 +520,26 @@ class LanguageServer:
     def logs(self) -> list[str]:
         with self._lock:
             return list(self._logs)
+
+
+# Server->client request handlers, keyed by method. Any method absent here is answered
+# with None, which is also the reply for the methods explicitly mapped to it below.
+_REPLY_HANDLERS: dict[str, Callable[[LanguageServer, dict[str, Any]], Any]] = {
+    "sonarlint/isOpenInEditor": LanguageServer._reply_is_open_in_editor,
+    "sonarlint/isIgnoredByScm": lambda _self, _params: False,
+    "sonarlint/askSslCertificateConfirmation": LanguageServer._reply_ssl_confirmation,
+    "sonarlint/listFilesInFolder": LanguageServer._reply_list_files_in_folder,
+    "sonarlint/getJavaConfig": lambda _self, _params: None,
+    "sonarlint/shouldAnalyseFile": lambda _self, _params: {"shouldBeAnalysed": True},
+    "sonarlint/shouldAnalyseFileCheck": lambda _self, _params: {"shouldBeAnalysed": True},
+    "sonarlint/getFileExclusions": lambda _self, _params: {"excludedFiles": []},
+    "sonarlint/filterOutExcludedFiles": lambda _self, _params: {"excludedFiles": []},
+    "sonarlint/getTokenForServer": LanguageServer._reply_token_for_server,
+    "workspace/configuration": LanguageServer._reply_configuration,
+    "workspace/workspaceFolders": lambda _self, _params: [],
+    "client/registerCapability": lambda _self, _params: None,
+    "window/showMessageRequest": lambda _self, _params: None,
+}
 
 
 @contextmanager

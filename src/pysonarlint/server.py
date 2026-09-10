@@ -217,29 +217,43 @@ class Client:
                 "&resolutions=FALSE-POSITIVE,WONTFIX"
                 f"&ps=500&p={page}"
             )
-            try:
-                code, data = self._json(path)
-            except ServerError:
+            data = self._issues_page(path)
+            if data is None:
                 return out
-            if code != 200 or not isinstance(data, dict):
-                return out
-            issues = data.get("issues")
-            if not isinstance(issues, list) or not issues:
-                return out
-            for issue in issues:
-                if not isinstance(issue, dict):
-                    continue
-                component = str(issue.get("component", ""))
-                _, _, rel = component.partition(":")
-                line = issue.get("line")
-                rule = str(issue.get("rule", ""))
-                if rel and isinstance(line, int) and rule:
-                    out.add((rel, line, rule))
-            total = data.get("total")
+            out.update(_resolved_keys(data["issues"]))
+            total = data["total"]
             if isinstance(total, int) and page * 500 >= total:
                 return out
             page += 1
         return out
+
+    def _issues_page(self, path: str) -> dict[str, Any] | None:
+        """One page of issues as {"issues": [...], "total": ...}, or None to stop."""
+        try:
+            code, data = self._json(path)
+        except ServerError:
+            return None
+        if code != 200 or not isinstance(data, dict):
+            return None
+        issues = data.get("issues")
+        if not isinstance(issues, list) or not issues:
+            return None
+        return {"issues": issues, "total": data.get("total")}
+
+
+def _resolved_keys(issues: list[Any]) -> set[tuple[str, int, str]]:
+    """Turn a page of issue objects into (file path suffix, line, rule) keys."""
+    out: set[tuple[str, int, str]] = set()
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        component = str(issue.get("component", ""))
+        _, _, rel = component.partition(":")
+        line = issue.get("line")
+        rule = str(issue.get("rule", ""))
+        if rel and isinstance(line, int) and rule:
+            out.add((rel, line, rule))
+    return out
 
 
 def project_exists(url: str, token: str, project_key: str) -> bool | None:

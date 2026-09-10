@@ -263,30 +263,61 @@ class _Handler(BaseHTTPRequestHandler):
             return None
 
         # Sniff for JSON regardless of the declared content type.
-        if text.startswith("{"):
-            try:
-                data = json.loads(text)
-            except json.JSONDecodeError:
-                data = None
-            if isinstance(data, dict):
-                for key in ("token", "value"):
-                    candidate = data.get(key)
-                    if isinstance(candidate, str) and candidate.strip():
-                        return candidate.strip()
-                return None
+        decided, token = _token_from_json(text)
+        if decided:
+            return token
 
         content_type = (self.headers.get("Content-Type") or "").lower()
-        if "form-urlencoded" in content_type or ("=" in text and "\n" not in text):
-            parsed = parse_qs(text)
-            for key in ("token", "value"):
-                if parsed.get(key):
-                    return parsed[key][0].strip()
+        decided, token = _token_from_form(text, content_type)
+        if decided:
+            return token
 
-        # A bare token. Reject anything that is obviously not one so a stray body
-        # never gets stored and reported as a working credential.
-        if "\n" in text or len(text) > 200 or text.startswith(("<", "[")):
-            return None
-        return text or None
+        return _bare_token(text)
+
+
+def _token_from_json(text: str) -> tuple[bool, str | None]:
+    """Try the JSON-object strategy. Returns (decided, token).
+
+    `decided` is True only when the body really was a JSON object, in which case its
+    verdict is final: no other strategy should second-guess a well-formed payload.
+    """
+    if not text.startswith("{"):
+        return False, None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    if not isinstance(data, dict):
+        return False, None
+    for key in ("token", "value"):
+        candidate = data.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return True, candidate.strip()
+    return True, None
+
+
+def _token_from_form(text: str, content_type: str) -> tuple[bool, str | None]:
+    """Try the form-encoded strategy, by declared type or by shape.
+
+    `decided` is True once a token/value key is present, so an empty value is reported
+    as "no token" rather than falling through to the bare-token reading of the body.
+    """
+    if not ("form-urlencoded" in content_type or ("=" in text and "\n" not in text)):
+        return False, None
+    parsed = parse_qs(text)
+    for key in ("token", "value"):
+        if parsed.get(key):
+            return True, parsed[key][0].strip()
+    return False, None
+
+
+def _bare_token(text: str) -> str | None:
+    """Read the body as a bare token, if it plausibly is one."""
+    # A bare token. Reject anything that is obviously not one so a stray body
+    # never gets stored and reported as a working credential.
+    if "\n" in text or len(text) > 200 or text.startswith(("<", "[")):
+        return None
+    return text or None
 
 
 def _bind_listener() -> tuple[HTTPServer, int]:

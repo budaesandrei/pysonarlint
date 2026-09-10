@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import __version__
@@ -19,6 +20,7 @@ from .analyze import analyze
 from .collect import LANGUAGES, collect
 from .config import resolve
 from .engine import EngineNotFound, discover
+from .progress import Progress
 from .report import FORMATTERS, filter_issues, redact, render_text
 
 EXIT_CLEAN = 0
@@ -73,6 +75,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--sonarlint-home", type=Path, help="path to a SonarQube for IDE extension")
     parser.add_argument("-v", "--verbose", action="store_true", help="include server logs on stderr")
     parser.add_argument("-q", "--quiet", action="store_true", help="suppress notes and summary")
+    parser.add_argument(
+        "--no-progress", action="store_true", help="never show the progress indicator"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -139,10 +144,7 @@ def _targets(args: argparse.Namespace) -> list[Path]:
 
 def _cmd_analyze(args: argparse.Namespace) -> int:
     targets = _targets(args)
-    missing = [t for t in targets if not t.exists()]
-    if missing:
-        for path in missing:
-            print(f"pysonarlint: no such file or directory: {path}", file=sys.stderr)
+    if not _report_missing(targets):
         return EXIT_ERROR
 
     engine = discover(args.sonarlint_home)
@@ -156,6 +158,27 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         standalone=args.standalone,
     )
 
+    # Progress goes to stderr and silences itself when not on a terminal, so it never
+    # contaminates piped json/sarif. --verbose owns stderr, so they are exclusive.
+    reporter = Progress(enabled=False if (args.no_progress or args.verbose) else None)
+
+    files, collect_notes = _collect_files(args, cfg, targets, reporter)
+
+    result = analyze(
+        files, cfg, engine, timeout=args.timeout, verbose=args.verbose, progress=reporter
+    )
+    result.notes = [redact(n, cfg.binding.token) for n in (*cfg.notes, *collect_notes, *result.notes)]
+    if args.severity:
+        result.issues = filter_issues(result.issues, args.severity)
+
+    _emit_report(args, result, cfg)
+    _echo_logs(args, result, cfg)
+    return _analyze_exit_code(args, result)
+
+
+def _collect_files(args, cfg, targets: list[Path], reporter: Progress):  # noqa: ANN001, ANN201
+    """Find the files to analyze, announcing the tally through the progress reporter."""
+    reporter.start("looking for files...")
     languages = None if args.all_languages else set(args.languages or ["python"])
     files, collect_notes = collect(
         targets,
@@ -163,12 +186,31 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         exclusions=cfg.exclusions,
         languages=languages,
     )
+    reporter.stop()
+    if files:
+        kinds = ", ".join(sorted({f.language for f in files}))
+        reporter.note(f"found {len(files)} file(s) to analyze ({kinds})")
+    return files, collect_notes
 
-    result = analyze(files, cfg, engine, timeout=args.timeout, verbose=args.verbose)
-    result.notes = [redact(n, cfg.binding.token) for n in (*cfg.notes, *collect_notes, *result.notes)]
-    if args.severity:
-        result.issues = filter_issues(result.issues, args.severity)
 
+def _echo_logs(args, result, cfg) -> None:  # noqa: ANN001
+    if args.verbose and result.logs:
+        # The server echoes its own configuration, which has held the token in some
+        # versions. Redact before anything reaches a terminal or a bug report.
+        for line in result.logs:
+            print(redact(line, cfg.binding.token), file=sys.stderr)
+
+
+def _report_missing(targets: list[Path]) -> bool:
+    """Print a message for each nonexistent target. False if any were missing."""
+    missing = [t for t in targets if not t.exists()]
+    for path in missing:
+        print(f"pysonarlint: no such file or directory: {path}", file=sys.stderr)
+    return not missing
+
+
+def _emit_report(args: argparse.Namespace, result, cfg) -> None:  # noqa: ANN001
+    """Render in the requested format and write it to the output file or stdout."""
     formatter = FORMATTERS[args.format]
     if args.format == "text":
         text = render_text(result, cfg.root, stream=sys.stdout, show_notes=not args.quiet)
@@ -181,18 +223,67 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     else:
         print(text)
 
-    if args.verbose and result.logs:
-        # The server echoes its own configuration, which has held the token in some
-        # versions. Redact before anything reaches a terminal or a bug report.
-        for line in result.logs:
-            print(redact(line, cfg.binding.token), file=sys.stderr)
 
+def _analyze_exit_code(args: argparse.Namespace, result) -> int:  # noqa: ANN001
     # A run that could not finish must not look clean.
     if result.incomplete:
         return EXIT_ERROR
     if args.fail_on == "never":
         return EXIT_CLEAN
     return EXIT_ISSUES if filter_issues(result.issues, args.fail_on) else EXIT_CLEAN
+
+
+def _status_payload(cfg, engine, engine_error: str | None) -> dict[str, object]:  # noqa: ANN001
+    return {
+        "engine": (
+            {
+                "version": engine.version,
+                "root": str(engine.root),
+                "java": str(engine.java),
+                "analyzers": [a.stem for a in engine.analyzers],
+            }
+            if engine
+            else None
+        ),
+        "engineError": engine_error,
+        "root": str(cfg.root),
+        "mode": "connected" if cfg.connected else "standalone",
+        "binding": {
+            "url": cfg.binding.url,
+            "projectKey": cfg.binding.project_key,
+            "organization": cfg.binding.organization,
+            "hasToken": bool(cfg.binding.token),
+        },
+        # Renamed from "token" so no consumer mistakes a provenance label for a
+        # credential, and never carries the value itself.
+        "provenance": {
+            (f"{k}Source" if k == "token" else k): v for k, v in cfg.provenance.items()
+        },
+        "notes": cfg.notes,
+    }
+
+
+def _print_status(cfg, engine, engine_error: str | None) -> None:  # noqa: ANN001
+    if engine:
+        analyzers = ", ".join(a.stem for a in engine.analyzers[:5])
+        print(f"engine     {engine.version}  {engine.root}")
+        print(f"java       {engine.java}")
+        print(f"analyzers  {len(engine.analyzers)} ({analyzers}, ...)")
+    else:
+        print("engine     NOT FOUND")
+        print(f"           {engine_error}")
+    print(f"root       {cfg.root}")
+    print(f"mode       {'connected' if cfg.connected else 'standalone'}")
+    for label, value, key in (
+        ("server ", cfg.binding.url, "url"),
+        ("project", cfg.binding.project_key, "project_key"),
+    ):
+        if value:
+            print(f"{label}    {value}  ({cfg.provenance.get(key, '?')})")
+    if cfg.binding.token:
+        print(f"token      set  ({cfg.provenance.get('token', '?')})")
+    for note in cfg.notes:
+        print(f"note       {note}")
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -209,58 +300,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if args.format == "json":
         import json
 
-        print(
-            json.dumps(
-                {
-                    "engine": (
-                        {
-                            "version": engine.version,
-                            "root": str(engine.root),
-                            "java": str(engine.java),
-                            "analyzers": [a.stem for a in engine.analyzers],
-                        }
-                        if engine
-                        else None
-                    ),
-                    "engineError": engine_error,
-                    "root": str(cfg.root),
-                    "mode": "connected" if cfg.connected else "standalone",
-                    "binding": {
-                        "url": cfg.binding.url,
-                        "projectKey": cfg.binding.project_key,
-                        "organization": cfg.binding.organization,
-                        "hasToken": bool(cfg.binding.token),
-                    },
-                    # Renamed from "token" so no consumer mistakes a provenance
-                    # label for a credential, and never carries the value itself.
-                    "provenance": {
-                        (f"{k}Source" if k == "token" else k): v
-                        for k, v in cfg.provenance.items()
-                    },
-                    "notes": cfg.notes,
-                },
-                indent=2,
-            )
-        )
-        return EXIT_CLEAN if engine else EXIT_ERROR
-
-    if engine:
-        print(f"engine     {engine.version}  {engine.root}")
-        print(f"java       {engine.java}")
-        print(f"analyzers  {len(engine.analyzers)} ({', '.join(a.stem for a in engine.analyzers[:5])}, ...)")
+        print(json.dumps(_status_payload(cfg, engine, engine_error), indent=2))
     else:
-        print("engine     NOT FOUND")
-        print(f"           {engine_error}")
-    print(f"root       {cfg.root}")
-    print(f"mode       {'connected' if cfg.connected else 'standalone'}")
-    if cfg.binding.url:
-        print(f"server     {cfg.binding.url}  ({cfg.provenance.get('url', '?')})")
-    if cfg.binding.project_key:
-        print(f"project    {cfg.binding.project_key}  ({cfg.provenance.get('project_key', '?')})")
-    if cfg.binding.token:
-        print(f"token      set  ({cfg.provenance.get('token', '?')})")
-    for note in cfg.notes:
-        print(f"note       {note}")
+        _print_status(cfg, engine, engine_error)
     return EXIT_CLEAN if engine else EXIT_ERROR
 
 
@@ -282,8 +324,7 @@ def _cmd_login(args: argparse.Namespace) -> int:
     # Fail early on an unreachable or too-old server rather than after a browser trip.
     check = preflight(url, None)
     if check.info is None:
-        for problem in check.problems:
-            print(f"pysonarlint: {problem}", file=sys.stderr)
+        _print_problems(check.problems)
         return EXIT_ERROR
     print(f"server {url} is {check.info.status}, version {check.info.version}")
 
@@ -302,10 +343,7 @@ def _cmd_login(args: argparse.Namespace) -> int:
 
     verify = preflight(url, token, cfg.binding.project_key)
     if not verify.ok:
-        for problem in verify.problems:
-            print(f"pysonarlint: {problem}", file=sys.stderr)
-        for hint in verify.hints:
-            print(f"  hint: {hint}", file=sys.stderr)
+        _print_problems(verify.problems, verify.hints)
         return EXIT_ERROR
 
     saved, where = save_credential(Credential(url=url, token=token, organization=cfg.binding.organization))
@@ -313,6 +351,14 @@ def _cmd_login(args: argparse.Namespace) -> int:
     if not saved:
         print("  set SONAR_TOKEN in your environment to keep using it", file=sys.stderr)
     return EXIT_CLEAN
+
+
+def _print_problems(problems: Iterable[str], hints: Iterable[str] = ()) -> None:
+    """Report preflight failures, and any hints, on stderr."""
+    for problem in problems:
+        print(f"pysonarlint: {problem}", file=sys.stderr)
+    for hint in hints:
+        print(f"  hint: {hint}", file=sys.stderr)
 
 
 def _cmd_logout(args: argparse.Namespace) -> int:
