@@ -13,6 +13,7 @@ is our barrier.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -64,9 +65,7 @@ class Diagnostic:
 
     @property
     def severity_name(self) -> str:
-        return {1: "error", 2: "warning", 3: "info", 4: "hint"}.get(
-            self.severity, "warning"
-        )
+        return {1: "error", 2: "warning", 3: "info", 4: "hint"}.get(self.severity, "warning")
 
 
 def _uri(path: Path) -> str:
@@ -311,12 +310,10 @@ class LanguageServer:
             result = self._reply(method, params)
         except Exception:  # noqa: BLE001 - a client bug must not wedge the server
             result = None
-        try:
+        # The server may be shutting down; nothing useful to do from a reader
+        # thread, and a traceback here is pure noise.
+        with contextlib.suppress(LspError, OSError, ValueError):
             self._write({"jsonrpc": "2.0", "id": msg_id, "result": result})
-        except (LspError, OSError, ValueError):
-            # The server may be shutting down; nothing useful to do from a
-            # reader thread, and a traceback here is pure noise.
-            pass
 
     def _reply(self, method: str | None, params: dict[str, Any]) -> Any:
         """Answer a server->client request.
@@ -424,9 +421,7 @@ class LanguageServer:
             {
                 "processId": os.getpid(),
                 "rootUri": _uri(root) if root else None,
-                "workspaceFolders": (
-                    [{"uri": _uri(root), "name": root.name}] if root else None
-                ),
+                "workspaceFolders": ([{"uri": _uri(root), "name": root.name}] if root else None),
                 "capabilities": {
                     "textDocument": {
                         "publishDiagnostics": {"relatedInformation": True},

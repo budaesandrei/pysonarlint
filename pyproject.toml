@@ -44,6 +44,30 @@ build-backend = "uv_build"
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint]
+# Explicit rather than inherited: several `# noqa` comments in the codebase name
+# codes from these sets, and without `select` ruff runs its small default set and
+# then flags every one of those comments as unused.
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN", "RUF", "S", "N", "BLE"]
+ignore = [
+    "ANN401",  # Any is the honest type for JSON-RPC payloads
+    "S101",    # assert is correct in tests
+    "S603",    # subprocess is the whole point; the command is built from vetted paths
+    "S607",    # same
+    "S310",    # urlopen: the scheme is validated when the URL is normalised
+    "S110",    # try/except/pass is deliberate where a failure must not block analysis
+    "N818",    # LspError reads better than LspException for a protocol fault
+]
+
+[tool.ruff.lint.per-file-ignores]
+# LSP method names are camelCase on the wire, and the handlers mirror them.
+"src/pysonarlint/lsp.py" = ["N802"]
+# Tests reach into private helpers deliberately: that is where the protocol logic
+# lives, and testing it through the public surface would need a live JVM.
+# Test fixtures use obviously-fake token literals; flagging them as hardcoded
+# credentials is noise, and real secrets are covered by gitleaks in CI.
+"tests/*" = ["ANN001", "SLF001", "D107", "S105", "S106", "E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

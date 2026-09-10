@@ -63,9 +63,7 @@ def test_token_without_url_stays_standalone(
     assert any("no server URL" in n for n in cfg.notes)
 
 
-def test_both_halves_enable_connected_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_both_halves_enable_connected_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _repo(tmp_path)
     (repo / "sonar-project.properties").write_text("sonar.host.url=https://s.example.com\n")
     monkeypatch.setenv("SONAR_TOKEN", "squ_x")
@@ -141,9 +139,7 @@ def test_pyproject_table_is_read(tmp_path: Path) -> None:
 
 def test_exclusions_are_collected(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    (repo / "sonar-project.properties").write_text(
-        "sonar.exclusions=**/*.pyc, **/vendor/**\n"
-    )
+    (repo / "sonar-project.properties").write_text("sonar.exclusions=**/*.pyc, **/vendor/**\n")
     cfg = resolve(repo)
     assert "**/*.pyc" in cfg.exclusions
     assert "**/vendor/**" in cfg.exclusions

@@ -10,15 +10,14 @@ failure is never conflated with a clean result.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections.abc import Iterable
 from pathlib import Path
 
 from . import __version__
 from .analyze import analyze
-from .collect import LANGUAGES, collect
-from .config import resolve
+from .collect import LANGUAGES, SourceFile, collect
+from .config import Config, resolve
 from .engine import EngineNotFound, discover
 from .progress import Progress
 from .report import FORMATTERS, filter_issues, redact, render_text
@@ -43,9 +42,7 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         default="text",
         help="output format (default: text)",
     )
-    parser.add_argument(
-        "-o", "--output", type=Path, help="write to a file instead of stdout"
-    )
+    parser.add_argument("-o", "--output", type=Path, help="write to a file instead of stdout")
     parser.add_argument(
         "--severity",
         choices=("error", "warning", "info", "hint"),
@@ -64,8 +61,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         choices=sorted(set(LANGUAGES.values())),
         help="restrict to a language (repeatable; default: python)",
     )
-    parser.add_argument("--all-languages", action="store_true", help="analyze every supported language")
-    parser.add_argument("--standalone", action="store_true", help="ignore connected mode configuration")
+    parser.add_argument(
+        "--all-languages", action="store_true", help="analyze every supported language"
+    )
+    parser.add_argument(
+        "--standalone", action="store_true", help="ignore connected mode configuration"
+    )
     parser.add_argument("--server-url", help="SonarQube server URL")
     parser.add_argument("--token", help="authentication token (prefer $SONAR_TOKEN)")
     parser.add_argument("--project-key", help="server-side project key")
@@ -73,7 +74,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", type=Path, help="project root (default: nearest repo root)")
     parser.add_argument("--timeout", type=float, default=600.0, help="analysis timeout in seconds")
     parser.add_argument("--sonarlint-home", type=Path, help="path to a SonarQube for IDE extension")
-    parser.add_argument("-v", "--verbose", action="store_true", help="include server logs on stderr")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="include server logs on stderr"
+    )
     parser.add_argument("-q", "--quiet", action="store_true", help="suppress notes and summary")
     parser.add_argument(
         "--no-progress", action="store_true", help="never show the progress indicator"
@@ -100,7 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
     login_cmd = sub.add_parser("login", help="grant a token via the browser and store it")
     login_cmd.add_argument("--server-url", help="server URL (default: auto-detected)")
     login_cmd.add_argument("--token", help="store a token you already have, skipping the browser")
-    login_cmd.add_argument("--no-browser", action="store_true", help="print the URL instead of opening it")
+    login_cmd.add_argument(
+        "--no-browser", action="store_true", help="print the URL instead of opening it"
+    )
     login_cmd.add_argument("--timeout", type=float, default=180.0)
     login_cmd.add_argument("--root", type=Path)
 
@@ -167,7 +172,9 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     result = analyze(
         files, cfg, engine, timeout=args.timeout, verbose=args.verbose, progress=reporter
     )
-    result.notes = [redact(n, cfg.binding.token) for n in (*cfg.notes, *collect_notes, *result.notes)]
+    result.notes = [
+        redact(n, cfg.binding.token) for n in (*cfg.notes, *collect_notes, *result.notes)
+    ]
     if args.severity:
         result.issues = filter_issues(result.issues, args.severity)
 
@@ -176,7 +183,9 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     return _analyze_exit_code(args, result)
 
 
-def _collect_files(args, cfg, targets: list[Path], reporter: Progress):  # noqa: ANN001, ANN201
+def _collect_files(
+    args: argparse.Namespace, cfg: Config, targets: list[Path], reporter: Progress
+) -> tuple[list[SourceFile], list[str]]:
     """Find the files to analyze, announcing the tally through the progress reporter."""
     reporter.start("looking for files...")
     languages = None if args.all_languages else set(args.languages or ["python"])
@@ -256,9 +265,7 @@ def _status_payload(cfg, engine, engine_error: str | None) -> dict[str, object]:
         },
         # Renamed from "token" so no consumer mistakes a provenance label for a
         # credential, and never carries the value itself.
-        "provenance": {
-            (f"{k}Source" if k == "token" else k): v for k, v in cfg.provenance.items()
-        },
+        "provenance": {(f"{k}Source" if k == "token" else k): v for k, v in cfg.provenance.items()},
         "notes": cfg.notes,
     }
 
@@ -346,7 +353,9 @@ def _cmd_login(args: argparse.Namespace) -> int:
         _print_problems(verify.problems, verify.hints)
         return EXIT_ERROR
 
-    saved, where = save_credential(Credential(url=url, token=token, organization=cfg.binding.organization))
+    saved, where = save_credential(
+        Credential(url=url, token=token, organization=cfg.binding.organization)
+    )
     print("token verified" + (f" and saved to {where}" if saved else f" but NOT saved: {where}"))
     if not saved:
         print("  set SONAR_TOKEN in your environment to keep using it", file=sys.stderr)

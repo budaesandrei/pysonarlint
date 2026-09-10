@@ -14,7 +14,6 @@ import itertools
 import os
 import sys
 import threading
-import time
 
 _FRAMES = "|/-\\"
 # U+28xx braille renders as a smooth spinner in modern terminals, but Windows consoles

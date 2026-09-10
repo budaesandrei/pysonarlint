@@ -84,7 +84,9 @@ def render_text(result: Result, root: Path, *, stream=None, show_notes: bool = T
         )
 
     mode = "connected" if result.connected else "standalone"
-    lines.append(paint(f"{mode} mode, engine {result.engine_version}, {result.duration:.1f}s", _DIM))
+    lines.append(
+        paint(f"{mode} mode, engine {result.engine_version}, {result.duration:.1f}s", _DIM)
+    )
 
     if show_notes:
         lines.extend(paint(f"note: {note}", _COLORS["info"]) for note in _safe_notes(result))

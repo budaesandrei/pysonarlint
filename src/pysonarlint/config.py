@@ -334,7 +334,9 @@ class Resolver:
                 ident = (
                     _s(entry.get("connectionId"))
                     or _s(entry.get("serverId"))
-                    or _connection_id(_s(entry.get("serverUrl")) or _s(entry.get("organizationKey")) or "")
+                    or _connection_id(
+                        _s(entry.get("serverUrl")) or _s(entry.get("organizationKey")) or ""
+                    )
                 )
                 if ident and ident == binding_id:
                     return entry, is_cloud
@@ -360,13 +362,17 @@ class Resolver:
             if not isinstance(table, dict):
                 continue
             rel = f"{self._rel(path)} [tool.pysonarlint]"
-            self.cfg._set("url", _normalize_url(_s(table.get("server_url") or table.get("hostUrl"))), rel)
-            self.cfg._set("project_key", _s(table.get("project_key") or table.get("projectKey")), rel)
+            self.cfg._set(
+                "url", _normalize_url(_s(table.get("server_url") or table.get("hostUrl"))), rel
+            )
+            self.cfg._set(
+                "project_key", _s(table.get("project_key") or table.get("projectKey")), rel
+            )
             self.cfg._set("organization", _s(table.get("organization")), rel)
-            if excl := table.get("exclusions"):
-                if isinstance(excl, list):
-                    self.cfg.exclusions.extend(str(e) for e in excl)
-                    self.cfg.provenance.setdefault("exclusions", rel)
+            excl = table.get("exclusions")
+            if isinstance(excl, list) and excl:
+                self.cfg.exclusions.extend(str(e) for e in excl)
+                self.cfg.provenance.setdefault("exclusions", rel)
             break
 
     # -- helpers -----------------------------------------------------------

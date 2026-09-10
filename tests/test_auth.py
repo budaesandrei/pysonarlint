@@ -20,7 +20,7 @@ REAL_PAYLOAD = (
 class _FakeHandler(_Handler):
     """Exercises _extract_token without a live HTTP server."""
 
-    def __init__(self, content_type: str) -> None:  # noqa: D107
+    def __init__(self, content_type: str) -> None:
         self.headers = {"Content-Type": content_type}  # type: ignore[assignment]
 
 

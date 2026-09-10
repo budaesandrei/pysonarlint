@@ -62,7 +62,7 @@ def test_redact_handles_several_secrets() -> None:
 
 
 @pytest.mark.parametrize("renderer", [render_json, render_sarif, render_github])
-def test_no_token_in_machine_output(renderer) -> None:  # noqa: ANN001
+def test_no_token_in_machine_output(renderer) -> None:
     """These formats are pasted into issues and uploaded to code scanning."""
     out = renderer(_result_mentioning_token(), Path("/repo"))
     assert TOKEN not in out or "<redacted>" in out

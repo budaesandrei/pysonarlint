@@ -178,4 +178,6 @@ def test_configuration_reply_is_positionally_aligned() -> None:
 
 
 def test_files_exclude_section_gets_an_object() -> None:
-    assert _server()._reply("workspace/configuration", {"items": [{"section": "files.exclude"}]}) == [{}]
+    assert _server()._reply(
+        "workspace/configuration", {"items": [{"section": "files.exclude"}]}
+    ) == [{}]

@@ -41,10 +41,6 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
-    # Advisory for now: the code has not been through a ruff pass yet, and a red
-    # badge on the first commit is noise rather than signal. Drop this line once
-    # the job is green.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -53,9 +49,6 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
-    # Advisory until the findings have been triaged once by hand. Real defects
-    # should become fixes or explicit nosec comments, not a permanently red badge.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -71,9 +64,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # gitleaks needs history to scan every commit
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The gitleaks binary rather than gitleaks-action: the action gates features
+      # behind a licence check and its logs are not readable without admin rights,
+      # which makes a failure impossible to diagnose from outside the repo.
+      - name: Scan history for secrets
+        run: |
+          VERSION=8.30.1
+          curl -sSL --max-time 60 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          # 'git' scans commit history; 'detect' was removed in 8.19.
+          ./gitleaks git . --redact --verbose --exit-code 1
 
   build:
     runs-on: ubuntu-latest

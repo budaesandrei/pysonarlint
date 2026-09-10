@@ -14,7 +14,7 @@ from pathlib import Path
 from .collect import SourceFile, analyzers_for, read_text
 from .config import Config
 from .engine import Engine
-from .lsp import Diagnostic, LspError, language_server
+from .lsp import Diagnostic, LanguageServer, LspError, language_server
 from .progress import Progress
 
 # How long to keep waiting after the last new diagnostic before declaring completion.
@@ -221,7 +221,9 @@ def _drop_unresolvable_project_key(cfg: Config, result: Result) -> None:
         return
     from .server import project_exists
 
-    present = project_exists(cfg.binding.url or "", cfg.binding.token or "", cfg.binding.project_key)
+    present = project_exists(
+        cfg.binding.url or "", cfg.binding.token or "", cfg.binding.project_key
+    )
     if present is False:
         result.notes.append(
             f"project '{cfg.binding.project_key}' does not exist on "
@@ -231,8 +233,8 @@ def _drop_unresolvable_project_key(cfg: Config, result: Result) -> None:
         cfg.binding.project_key = None
 
 
-def _run_session(  # noqa: ANN001
-    ls,
+def _run_session(
+    ls: LanguageServer,
     files: list[SourceFile],
     cfg: Config,
     result: Result,
@@ -255,15 +257,11 @@ def _run_session(  # noqa: ANN001
     # Warm-up barrier, before any document is opened. In connected mode this
     # also covers storage sync, which can be slow, but it must not be able to
     # consume the whole budget.
-    reporter.set_message(
-        "syncing with server..." if cfg.connected else "loading rules..."
-    )
+    reporter.set_message("syncing with server..." if cfg.connected else "loading rules...")
     ls.barrier(timeout=min(timeout * 0.4, 180.0))
     reporter.set_total(len(files))
 
-    opened, unread = _open_documents(
-        ls, files, result, reporter, started=started, timeout=timeout
-    )
+    opened, unread = _open_documents(ls, files, result, reporter, started=started, timeout=timeout)
 
     if unread:
         result.notes.append(f"could not read {unread} file(s)")
@@ -277,8 +275,8 @@ def _run_session(  # noqa: ANN001
     _record_outcome(ls, cfg, result, settled=settled)
 
 
-def _open_documents(  # noqa: ANN001
-    ls,
+def _open_documents(
+    ls: LanguageServer,
     files: list[SourceFile],
     result: Result,
     reporter: Progress,
@@ -312,8 +310,7 @@ def _open_documents(  # noqa: ANN001
         reporter.advance(issues=ls.diagnostic_count(), name=source.path.name)
         if not ok:
             result.notes.append(
-                f"timed out waiting for {source.path.name}; "
-                "later files were not analyzed"
+                f"timed out waiting for {source.path.name}; later files were not analyzed"
             )
             break
     return opened, unread
@@ -329,8 +326,7 @@ def _record_outcome(ls, cfg: Config, result: Result, *, settled: bool) -> None: 
         result.connected = False
         result.degraded_from_connected = True
         result.notes.append(
-            "could not use connected mode, analyzed with local rules instead: "
-            + "; ".join(reasons)
+            "could not use connected mode, analyzed with local rules instead: " + "; ".join(reasons)
         )
 
     # Results that arrived are real even if the settle window expired. Only
@@ -342,7 +338,7 @@ def _record_outcome(ls, cfg: Config, result: Result, *, settled: bool) -> None: 
             result.incomplete = True
 
 
-def _await_file(ls, completed_before: int, started: float, timeout: float) -> bool:  # noqa: ANN001
+def _await_file(ls: LanguageServer, completed_before: int, started: float, timeout: float) -> bool:
     """Wait for one document's analysis to complete.
 
     Returns False only on timeout. Completion is the server's own "Analysis detected"
@@ -356,7 +352,7 @@ def _await_file(ls, completed_before: int, started: float, timeout: float) -> bo
     return True
 
 
-def _await_settle(ls, started: float, timeout: float, settle: float) -> bool:  # noqa: ANN001
+def _await_settle(ls: LanguageServer, started: float, timeout: float, settle: float) -> bool:
     """Wait for analysis to genuinely finish. True if it completed, False on timeout.
 
     The request barrier only proves the documents were received; rule execution runs

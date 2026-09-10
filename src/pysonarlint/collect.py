@@ -8,7 +8,6 @@ are skipped before they are ever descended into.
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import re
 from collections.abc import Iterable, Iterator
@@ -18,13 +17,36 @@ from pathlib import Path
 # Directories never worth descending into. Checked by exact name before recursing.
 PRUNE_DIRS = frozenset(
     {
-        ".git", ".hg", ".svn",
-        ".venv", "venv", "env", ".env", "virtualenv",
-        "site-packages", "dist-packages", "node_modules",
-        "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache", ".tox", ".nox",
-        ".idea", ".vscode-test", ".gradle", ".terraform",
-        "dist", "build", ".eggs", "htmlcov", ".coverage",
-        ".sonarlint", ".scannerwork", ".next", ".cache",
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        ".env",
+        "virtualenv",
+        "site-packages",
+        "dist-packages",
+        "node_modules",
+        "__pycache__",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".tox",
+        ".nox",
+        ".idea",
+        ".vscode-test",
+        ".gradle",
+        ".terraform",
+        "dist",
+        "build",
+        ".eggs",
+        "htmlcov",
+        ".coverage",
+        ".sonarlint",
+        ".scannerwork",
+        ".next",
+        ".cache",
     }
 )
 
@@ -170,9 +192,7 @@ def _iter_files(start: Path, matcher: Matcher, follow_links: bool = False) -> It
         dirnames[:] = [
             d
             for d in dirnames
-            if d not in PRUNE_DIRS
-            and not d.startswith(".")
-            and not matcher.excluded(here / d)
+            if d not in PRUNE_DIRS and not d.startswith(".") and not matcher.excluded(here / d)
         ]
 
         for name in filenames:

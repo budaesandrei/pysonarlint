@@ -105,7 +105,14 @@ class Client:
 
     def _request(self, path: str, *, authed: bool = True) -> tuple[int, bytes, dict[str, str]]:
         url = f"{self.url}/{path.lstrip('/')}"
-        req = urllib.request.Request(url, method="GET")
+        # The server URL comes from project files and the environment, so the scheme is
+        # attacker-influenceable in principle. urlopen would happily accept file: or
+        # ftp:, which combined with the Authorization header below is how a credential
+        # ends up somewhere unintended.
+        scheme = urllib.parse.urlsplit(url).scheme.lower()
+        if scheme not in ("http", "https"):
+            raise ServerError(f"refusing to request a non-HTTP(S) URL: {url}")
+        req = urllib.request.Request(url, method="GET")  # nosec B310 - scheme checked above
         req.add_header("User-Agent", "pysonarlint")
         req.add_header("Accept", "application/json")
         if authed and self.token:
@@ -118,7 +125,9 @@ class Client:
                 raw = base64.b64encode(f"{self.token}:".encode()).decode()
                 req.add_header("Authorization", f"Basic {raw}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout, context=self._ctx) as resp:
+            with urllib.request.urlopen(  # nosec B310 - scheme checked above
+                req, timeout=self.timeout, context=self._ctx
+            ) as resp:
                 return resp.status, resp.read(), dict(resp.headers)
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read() or b"", dict(exc.headers or {})
@@ -265,10 +274,8 @@ def project_exists(url: str, token: str, project_key: str) -> bool | None:
     client = Client(url, token)
     try:
         info = client.status()
-        client._bearer = client.is_cloud or info.supports_bearer  # noqa: SLF001
-        code, _ = client._json(  # noqa: SLF001
-            f"api/components/show?component={urllib.parse.quote(project_key)}"
-        )
+        client._bearer = client.is_cloud or info.supports_bearer
+        code, _ = client._json(f"api/components/show?component={urllib.parse.quote(project_key)}")
     except ServerError:
         return None
     if code == 200:
@@ -304,7 +311,7 @@ def preflight(url: str, token: str | None, project_key: str | None = None) -> Pr
         return result
 
     # Negotiate the auth scheme exactly as SonarLint does.
-    client._bearer = client.is_cloud or info.supports_bearer  # noqa: SLF001
+    client._bearer = client.is_cloud or info.supports_bearer
 
     if not token:
         result.problems.append("no token")
@@ -314,7 +321,7 @@ def preflight(url: str, token: str | None, project_key: str | None = None) -> Pr
     valid = client.validate_token()
     if not valid and not client.is_cloud and info.supports_bearer:
         # Retry with Basic in case a proxy strips bearer headers.
-        client._bearer = False  # noqa: SLF001
+        client._bearer = False
         valid = client.validate_token()
         if valid:
             result.hints.append("server accepted Basic auth but not Bearer")

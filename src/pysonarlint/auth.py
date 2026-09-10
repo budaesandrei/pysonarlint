@@ -13,6 +13,7 @@ raising, so a login is never lost to a keyring problem.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import socket
@@ -68,7 +69,9 @@ def _dpapi_encrypt(data: bytes) -> bytes | None:
             _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
         crypt32 = ctypes.windll.crypt32
-        blob_in = BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_char)))
+        blob_in = BLOB(
+            len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_char))
+        )
         blob_out = BLOB()
         if not crypt32.CryptProtectData(
             ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
@@ -93,7 +96,9 @@ def _dpapi_decrypt(data: bytes) -> bytes | None:
             _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
         crypt32 = ctypes.windll.crypt32
-        blob_in = BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_char)))
+        blob_in = BLOB(
+            len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_char))
+        )
         blob_out = BLOB()
         if not crypt32.CryptUnprotectData(
             ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
@@ -185,7 +190,11 @@ def forget(url: str) -> bool:
     try:
         raw = json.dumps({"version": 1, "credentials": creds}).encode("utf-8")
         if (sealed := _dpapi_encrypt(raw)) is not None:
-            payload = {"version": 1, "encryption": "dpapi", "data": base64.b64encode(sealed).decode()}
+            payload = {
+                "version": 1,
+                "encryption": "dpapi",
+                "data": base64.b64encode(sealed).decode(),
+            }
         else:
             payload = {"version": 1, "encryption": "none", "data": base64.b64encode(raw).decode()}
         path.write_text(json.dumps(payload), encoding="utf-8")
@@ -200,7 +209,7 @@ class _Handler(BaseHTTPRequestHandler):
     received: str | None = None
     done: threading.Event
 
-    def log_message(self, *_args: object) -> None:  # noqa: D102 - silence stderr logging
+    def log_message(self, *_args: object) -> None:
         pass
 
     def _cors(self) -> None:
@@ -210,12 +219,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Private-Network", "true")
 
-    def do_OPTIONS(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+    def do_OPTIONS(self) -> None:
         self.send_response(204)
         self._cors()
         self.end_headers()
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         """The server probes for a live IDE before offering to generate a token."""
         path = urlparse(self.path).path.rstrip("/")
         if path.endswith("/status"):
@@ -233,7 +242,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"pysonarlint is listening")
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
         token = self._extract_token(raw)
@@ -351,18 +360,18 @@ def grant_token(
     _Handler.received = None
     _Handler.done = threading.Event()
 
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True
+    )
     thread.start()
 
     auth_url = f"{url.rstrip('/')}/sonarlint/auth?ideName={IDE_NAME}&port={port}"
     if on_url is not None:
         on_url(auth_url)
     if open_browser:
-        try:
+        # Headless environments have no browser; the URL was already printed.
+        with contextlib.suppress(Exception):
             webbrowser.open(auth_url)
-        except Exception:  # noqa: BLE001
-            # Headless environments have no browser; the URL was already printed.
-            pass
 
     try:
         if not _Handler.done.wait(timeout):
