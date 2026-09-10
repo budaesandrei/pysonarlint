@@ -19,7 +19,7 @@ jobs:
         python: ["3.11", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - run: uv python install ${{ matrix.python }}
       - run: uv run --python ${{ matrix.python }} --group dev pytest -q
@@ -29,7 +29,7 @@ jobs:
   verify-version:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - name: Tag must match project version
         run: |
@@ -50,7 +50,7 @@ jobs:
       # token needs to exist anywhere. Configure the publisher on PyPI first.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - run: uv build
       - run: uv run --with twine twine check dist/*
