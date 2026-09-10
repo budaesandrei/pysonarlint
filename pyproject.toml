@@ -71,3 +71,15 @@ ignore = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.coverage.report]
+show_missing = true
+# Lines that cannot be executed by a test by construction, rather than lines that are
+# merely inconvenient to reach. Anything genuinely reachable is expected to be covered.
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "@overload",
+    "\\.\\.\\.",
+]

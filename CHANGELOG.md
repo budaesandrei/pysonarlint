@@ -17,6 +17,12 @@ version is `0.x`, the CLI surface may change in a minor release.
 
 ### Fixed
 
+- **A language server that exited during teardown turned a successful run into a
+  tool failure.** `stop()` raises `LspError` on a broken pipe, which was not in its
+  own `except` tuple, so it escaped into the context manager's `finally` and reached
+  the analysis error handler *after* every issue had been collected. The run then
+  exited 2 (tool failure) instead of 1 (issues found). A JVM that has already exited
+  at teardown is normal, so this affected ordinary runs.
 - **Analysis reported no issues for files that had them.** Sending every `didOpen` at
   once made the server batch the documents, and a batched analysis publishes empty
   diagnostics for every file in it. Documents are now opened one at a time, each waiting

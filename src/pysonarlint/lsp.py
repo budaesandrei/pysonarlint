@@ -167,7 +167,12 @@ class LanguageServer:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=5)
-        except (OSError, ValueError, subprocess.SubprocessError):
+        except (LspError, OSError, ValueError, subprocess.SubprocessError):
+            # LspError belongs here: _notify raises it on a broken pipe, and a JVM
+            # that has already exited is normal at teardown. Without it the error
+            # escapes into language_server()'s finally, reaches analyze()'s handler
+            # after every issue has been collected, and a successful run reports
+            # exit 2 (tool failure) instead of 1 (issues found).
             proc.kill()
         finally:
             for stream in (proc.stdout, proc.stderr):

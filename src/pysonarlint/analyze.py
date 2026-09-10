@@ -376,7 +376,10 @@ def _await_settle(ls: LanguageServer, started: float, timeout: float, settle: fl
         if state != last_state:
             last_state = state
             quiet_since = now
-        elif quiet_since is None:
+        # Defensive only, and unreachable by construction: quiet_since is None only
+        # before the first pass, and on the first pass last_state is None while state is
+        # always a 3-tuple, so the branch above has already run.
+        elif quiet_since is None:  # pragma: no cover
             quiet_since = now
 
         # Completion reported and nothing new for a moment: genuinely done.

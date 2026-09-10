@@ -11,7 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from pysonarlint.lsp import _ANALYSIS_DONE_RE, Diagnostic, LanguageServer, _from_uri, _uri
+from pysonarlint.lsp import (
+    _ANALYSIS_DONE_RE,
+    Diagnostic,
+    LanguageServer,
+    LspError,
+    _from_uri,
+    _uri,
+)
 
 
 def test_uri_percent_encodes_spaces() -> None:
@@ -181,3 +188,37 @@ def test_files_exclude_section_gets_an_object() -> None:
     assert _server()._reply(
         "workspace/configuration", {"items": [{"section": "files.exclude"}]}
     ) == [{}]
+
+
+def test_stop_swallows_a_broken_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A JVM that has already exited must not turn a successful run into a failure.
+
+    stop() runs in language_server()'s finally, so an LspError escaping it reaches
+    analyze()'s handler after every issue has been collected, and the CLI reports
+    exit 2 (tool failure) instead of 1 (issues found).
+    """
+    server = _server()
+
+    class _Proc:
+        stdin = None
+        stdout = None
+        stderr = None
+        killed = False
+
+        def poll(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            type(self).killed = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    server._proc = _Proc()
+
+    def _broken(_payload: object) -> None:
+        raise LspError("language server closed its input: broken pipe")
+
+    monkeypatch.setattr(server, "_write", _broken)
+    server.stop()  # must not raise
+    assert _Proc.killed

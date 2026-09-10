@@ -61,7 +61,10 @@ def _dpapi_encrypt(data: bytes) -> bytes | None:
     """Encrypt with the Windows user's DPAPI key, or None if unavailable."""
     if os.name != "nt":
         return None
-    try:
+    # No cover: needs a live Windows DPAPI keystore. Faking crypt32 would only test the
+    # fake. The caller's behaviour on both outcomes (sealed, and None -> plaintext
+    # fallback) is covered by monkeypatching this function's return value instead.
+    try:  # pragma: no cover
         import ctypes
         from ctypes import wintypes
 
@@ -81,14 +84,14 @@ def _dpapi_encrypt(data: bytes) -> bytes | None:
             return ctypes.string_at(blob_out.pbData, blob_out.cbData)
         finally:
             ctypes.windll.kernel32.LocalFree(blob_out.pbData)
-    except Exception:  # noqa: BLE001 - any failure means "no DPAPI"
+    except Exception:  # noqa: BLE001 - any failure means "no DPAPI"  # pragma: no cover
         return None
 
 
 def _dpapi_decrypt(data: bytes) -> bytes | None:
     if os.name != "nt":
         return None
-    try:
+    try:  # pragma: no cover - see _dpapi_encrypt: needs a live Windows keystore
         import ctypes
         from ctypes import wintypes
 
@@ -108,7 +111,7 @@ def _dpapi_decrypt(data: bytes) -> bytes | None:
             return ctypes.string_at(blob_out.pbData, blob_out.cbData)
         finally:
             ctypes.windll.kernel32.LocalFree(blob_out.pbData)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # pragma: no cover
         return None
 
 
@@ -210,6 +213,8 @@ class _Handler(BaseHTTPRequestHandler):
     done: threading.Event
 
     def log_message(self, *_args: object) -> None:
+        # Deliberately silent. BaseHTTPRequestHandler logs every request to stderr,
+        # which would interleave with our own output during the browser handshake.
         pass
 
     def _cors(self) -> None:
