@@ -735,5 +735,11 @@ def test_the_listener_is_released_after_a_grant(monkeypatch: pytest.MonkeyPatch)
         _post(port, REAL_PAYLOAD)
 
     _drive_grant(monkeypatch, client)
+    # Probed by connecting rather than by re-binding. The grant just completed a TCP
+    # exchange on this port, so on POSIX the closed server socket sits in TIME_WAIT and
+    # a plain bind() fails even though nothing is listening. SO_REUSEADDR would mask
+    # that, but on Windows it also permits binding over a *live* listener, which is the
+    # very thing this test exists to catch. A refused connection means released on both.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", ports[0]))  # would raise if still held
+        sock.settimeout(2.0)
+        assert sock.connect_ex(("127.0.0.1", ports[0])) != 0  # nonzero == nothing accepting

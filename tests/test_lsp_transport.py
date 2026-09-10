@@ -110,12 +110,32 @@ def test_no_analyzer_flag_when_there_are_none() -> None:
 # -- _uri / _from_uri ----------------------------------------------------
 
 
+class _ResolvedAs:
+    """A path stand-in with a fixed resolved posix form.
+
+    `_uri` only ever needs `.resolve().as_posix()`. A real `Path("C:/repo/a.py")` will
+    not do for the Windows cases: on POSIX that string is a *relative* path, so
+    `.resolve()` prepends the current directory and the drive-letter form under test is
+    never produced. Fixing the resolved form keeps the assertion about `_uri` rather
+    than about the machine the tests happen to run on.
+    """
+
+    def __init__(self, posix: str) -> None:
+        self._posix = posix
+
+    def resolve(self) -> _ResolvedAs:
+        return self
+
+    def as_posix(self) -> str:
+        return self._posix
+
+
 def test_uri_starts_with_the_file_scheme() -> None:
     assert _uri(Path("/srv/x.py")).startswith("file://")
 
 
 def test_uri_encodes_every_character_that_needs_it() -> None:
-    uri = _uri(Path("C:/a b/c#d/e?f.py"))
+    uri = _uri(_ResolvedAs("C:/a b/c#d/e?f.py"))
     assert " " not in uri
     assert "#" not in uri
     assert "?" not in uri
@@ -151,8 +171,8 @@ class _FakeOsName:
 def test_the_posix_uri_form_has_exactly_two_slashes(monkeypatch: pytest.MonkeyPatch) -> None:
     """The other platform's branch, which CI also covers natively on ubuntu and macos."""
     monkeypatch.setattr("pysonarlint.lsp.os", _FakeOsName("posix"))
-    uri = _uri(Path("/repo/a.py"))
-    assert uri.startswith("file:///repo/") or uri.startswith("file://")
+    uri = _uri(_ResolvedAs("/repo/a.py"))
+    assert uri.startswith("file:///repo/")
     assert not uri.startswith("file:////")
 
 
@@ -160,7 +180,7 @@ def test_the_windows_uri_form_has_three_slashes_before_the_drive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("pysonarlint.lsp.os", _FakeOsName("nt"))
-    assert _uri(Path("C:/repo/a.py")).startswith("file:///C:/")
+    assert _uri(_ResolvedAs("C:/repo/a.py")).startswith("file:///C:/")
 
 
 def test_from_uri_keeps_a_posix_leading_slash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -904,6 +924,11 @@ def test_start_reports_a_missing_java_binary(monkeypatch: pytest.MonkeyPatch) ->
         _server().start()
 
 
+# The documented value of subprocess.CREATE_NO_WINDOW. The attribute itself only exists
+# on Windows, so forcing the nt branch off Windows needs the constant supplied.
+_CREATE_NO_WINDOW = 0x08000000
+
+
 def test_start_hides_the_console_window_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without this a console flashes up on every run on Windows."""
     calls: list[object] = []
@@ -916,11 +941,16 @@ def test_start_hides_the_console_window_on_windows(monkeypatch: pytest.MonkeyPat
         return proc
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    # Present on Windows, absent elsewhere: assert against the real attribute where it
+    # exists, and inject it where it does not, so the nt branch is exercised on every
+    # platform rather than only on the one that defines the constant.
+    expected = getattr(subprocess, "CREATE_NO_WINDOW", _CREATE_NO_WINDOW)
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", expected, raising=False)
     monkeypatch.setattr("pysonarlint.lsp.os", _FakeOsName("nt"))
     server = _server()
     server.start()
     try:
-        assert calls[0] == subprocess.CREATE_NO_WINDOW
+        assert calls[0] == expected
     finally:
         server.stop()
 

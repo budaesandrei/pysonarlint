@@ -6,6 +6,12 @@ silently reduce the file set, which reads as "clean".
 
 from __future__ import annotations
 
+# Imported here, at module scope, rather than inside the tests that use it. `ctypes`
+# reads `os.name` at import time and pulls in Windows-only symbols when it is "nt", so a
+# first import performed while the fake `os` below is installed would fail off Windows.
+# Importing it now caches it in sys.modules, and the later `import ctypes` inside a test
+# is served from that cache without re-executing the module.
+import ctypes
 import os
 import sys
 from pathlib import Path
@@ -130,8 +136,7 @@ def test_color_on_windows_enables_vt_processing(monkeypatch: pytest.MonkeyPatch)
             calls.append("SetConsoleMode")
             return 1
 
-    import ctypes
-
+    # raising=False: `windll` only exists on Windows, so off Windows this adds it.
     monkeypatch.setattr(ctypes, "windll", type("W", (), {"kernel32": _Kernel32()})(), raising=False)
     assert _supports_color(_Tty()) is True
     assert calls == ["GetStdHandle", "SetConsoleMode"]
@@ -146,8 +151,6 @@ def test_no_color_when_the_windows_console_refuses(monkeypatch: pytest.MonkeyPat
         @property
         def kernel32(self) -> object:
             raise OSError("no console")
-
-    import ctypes
 
     monkeypatch.setattr(ctypes, "windll", _Broken(), raising=False)
     assert _supports_color(_Tty()) is False
@@ -401,6 +404,18 @@ def test_iter_files_does_not_revisit_a_directory(
             return _SameInode()
         return real_stat(self, **kwargs)  # type: ignore[arg-type]
 
+    # os.walk yields subdirectories in filesystem order, which NTFS sorts and ext4 does
+    # not, so without this "b" is descended into first and the surviving file is y.py.
+    # Which of the two survives is not the behaviour under test; that exactly one does
+    # is. Sorting in place fixes the descent order so the assertion can name a file.
+    real_walk = col.os.walk
+
+    def ordered(*args: object, **kwargs: object):  # noqa: ANN202 - an os.walk wrapper
+        for dirpath, dirnames, filenames in real_walk(*args, **kwargs):  # type: ignore[arg-type]
+            dirnames.sort()
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(col.os, "walk", ordered)
     monkeypatch.setattr(Path, "stat", same)
     found = sorted(p.name for p in _iter_files(tmp_path, Matcher([], tmp_path)))
     assert found == ["x.py"]  # "b" shared "a"'s inode key and was skipped
