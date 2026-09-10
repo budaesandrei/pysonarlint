@@ -2,15 +2,11 @@
 
 [![CI](https://github.com/budaesandrei/pysonarlint/actions/workflows/ci.yml/badge.svg)](https://github.com/budaesandrei/pysonarlint/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/budaesandrei/pysonarlint/branch/main/graph/badge.svg)](https://codecov.io/gh/budaesandrei/pysonarlint)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pysonarlint.svg)](https://pypi.org/project/pysonarlint/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-
-<!-- Uncomment once published to PyPI; until then these render "package not found".
 [![PyPI](https://img.shields.io/pypi/v/pysonarlint.svg)](https://pypi.org/project/pysonarlint/)
-[![Python versions](https://img.shields.io/pypi/pyversions/pysonarlint.svg)](https://pypi.org/project/pysonarlint/)
 [![Downloads](https://img.shields.io/pypi/dm/pysonarlint.svg)](https://pypi.org/project/pysonarlint/)
--->
 
 The issues SonarQube for IDE (formerly SonarLint) would highlight, from your terminal.
 
