@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a capability or change
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do that is hard today?
+      description: Describe the situation rather than a specific implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What did you have in mind?
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Please confirm
+      options:
+        - label: This does not require bundling or downloading SonarSource jars or binaries
+          required: true

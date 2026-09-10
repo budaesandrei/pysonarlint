@@ -1,0 +1,38 @@
+pysonarlint
+Copyright (c) 2026 budaesandrei
+Licensed under the MIT License. See LICENSE.
+
+================================================================================
+THIRD-PARTY SOFTWARE
+================================================================================
+
+This distribution contains NO third-party code, binaries or analyzers. The wheel
+is pure Python authored for this project.
+
+At runtime, pysonarlint locates and executes software that the user has already
+installed and licensed themselves, namely a SonarQube for IDE (formerly
+SonarLint) editor extension:
+
+  - SonarSource language server (sonarlint-ls.jar) .... LGPL-3.0
+    https://github.com/SonarSource/sonarlint-language-server
+  - SonarSource analyzers (e.g. sonarpython.jar) ...... Sonar Source-Available
+                                                        License v1 (SSALv1)
+    https://www.sonarsource.com/license/ssal/
+  - Eclipse Temurin JRE bundled with that extension ... GPL-2.0 with Classpath
+                                                        Exception
+
+Use of those components is governed by their own licences, directly between the
+user and their respective licensors. pysonarlint neither grants nor restricts
+any rights in them.
+
+================================================================================
+TRADEMARKS
+================================================================================
+
+pysonarlint is an independent, unofficial project. It is NOT a Sonar product and
+is NOT affiliated with, sponsored by, endorsed by or supported by SonarSource SA.
+
+Sonar, SonarSource, SonarQube, SonarQube for IDE and SonarLint are trademarks of
+SonarSource SA. All other trademarks are the property of their respective
+owners. These marks are used solely for the factual, descriptive purpose of
+identifying the third-party software with which this tool interoperates.

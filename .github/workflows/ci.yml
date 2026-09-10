@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install ${{ matrix.python }}
+      # The unit tests deliberately do not need the Java engine, so they run on
+      # every platform without installing an IDE extension.
+      - run: uv run --python ${{ matrix.python }} --group dev pytest -q
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --group dev --with pytest-cov pytest -q --cov=pysonarlint --cov-report=xml --cov-report=term
+      - uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # Coverage reporting must not gate a release; the test job is the gate.
+          fail_ci_if_error: false
+
+  lint:
+    runs-on: ubuntu-latest
+    # Advisory for now: the code has not been through a ruff pass yet, and a red
+    # badge on the first commit is noise rather than signal. Drop this line once
+    # the job is green.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --with ruff ruff check src tests
+      - run: uv run --with ruff ruff format --check src tests
+
+  security:
+    runs-on: ubuntu-latest
+    # Advisory until the findings have been triaged once by hand. Real defects
+    # should become fixes or explicit nosec comments, not a permanently red badge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # Static analysis for common Python security mistakes.
+      - run: uv run --with bandit bandit -r src -ll
+      # Dependency advisories. The package has no runtime dependencies, so this
+      # guards the dev tooling and any future addition.
+      - run: uv run --with pip-audit pip-audit --strict || true
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs history to scan every commit
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - run: uv run --with twine twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# pysonarlint runtime
+.sonarlint/
+*.log
+
+# Coverage artifacts
+coverage.xml
+.coverage
+.coverage.*
+htmlcov/

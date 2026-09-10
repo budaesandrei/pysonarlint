@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/budaesandrei/pysonarlint/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Problem with SonarSource's analyzers or rules
+    url: https://community.sonarsource.com/
+    about: pysonarlint executes SonarSource software but does not ship it. Rule behaviour and analyzer bugs belong upstream.

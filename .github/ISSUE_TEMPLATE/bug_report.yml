@@ -1,0 +1,37 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if pysonarlint reported **no issues** on code you expect findings
+        for, try a single file (`pysonarlint path/to/file.py`) and check `--verbose`. A
+        silent empty result is the most common failure mode and the logs usually say why.
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `pysonarlint status`
+      description: This reports the engine, root and where each config value came from.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: pysonarlint src --severity error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output (`--verbose` if analysis-related)
+      description: Secrets are redacted automatically, but please glance over it anyway.
+      render: text

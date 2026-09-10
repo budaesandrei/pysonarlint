@@ -1,0 +1,57 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  # Re-run the full matrix against the exact tagged commit. A release must never
+  # publish code that has not passed its own tests, and "CI was green on main
+  # yesterday" is not the same as "this tag is green".
+  test:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install ${{ matrix.python }}
+      - run: uv run --python ${{ matrix.python }} --group dev pytest -q
+
+  # The tag and the packaged version must agree, or you publish 0.1.0 under a
+  # v0.1.1 release and can never correct it: PyPI version numbers are permanent.
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Tag must match project version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(uv version --short)"
+          echo "tag=$TAG project=$VERSION"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::tag v$TAG does not match project version $VERSION"
+            exit 1
+          fi
+
+  publish:
+    needs: [test, verify-version]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Trusted publishing: PyPI verifies this workflow's OIDC identity, so no API
+      # token needs to exist anywhere. Configure the publisher on PyPI first.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - run: uv run --with twine twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
