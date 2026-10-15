@@ -20,7 +20,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
       - run: uv python install ${{ matrix.python }}
       - run: uv run --python ${{ matrix.python }} --group dev pytest -q
 
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
       - name: Tag must match project version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -51,7 +51,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
       - run: uv build
       - run: uv run --with twine twine check dist/*
       - uses: pypa/gh-action-pypi-publish@release/v1
